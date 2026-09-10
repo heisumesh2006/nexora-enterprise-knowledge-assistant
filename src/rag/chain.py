@@ -14,7 +14,7 @@ CHROMA_DIR = PROJECT_ROOT / "data" / "chroma"
 
 class RAGChain:
     """
-    Basic Retrieval-Augmented Generation pipeline.
+    Retrieval-Augmented Generation pipeline with source citations.
 
     Flow:
         Question
@@ -23,11 +23,11 @@ class RAGChain:
             ↓
         ChromaDB Retrieval
             ↓
-        Context Construction
+        Context + Citations
             ↓
         NVIDIA NeMoTron
             ↓
-        Answer
+        Answer + Source Citations
     """
 
     def __init__(
@@ -84,6 +84,65 @@ class RAGChain:
             query_embedding=query_embedding,
             n_results=self.top_k,
         )
+
+    def extract_citations(self, results: dict) -> list[dict]:
+        """
+        Extract structured citations from retrieved document metadata.
+
+        Citations are created from the actual ChromaDB retrieval results.
+        The LLM does not generate or invent citation information.
+        """
+
+        metadatas = results.get("metadatas", [[]])[0]
+
+        citations = []
+        seen = set()
+
+        for metadata in metadatas:
+            metadata = metadata or {}
+
+            source = Path(
+                metadata.get("source", "unknown")
+            ).name
+
+            page = metadata.get("page")
+
+            if page is not None:
+                citation = {
+                    "source": source,
+                    "page": int(page) + 1,
+                }
+                citation_key = (source, int(page) + 1)
+            else:
+                citation = {
+                    "source": source,
+                }
+                citation_key = (source, None)
+
+            if citation_key not in seen:
+                citations.append(citation)
+                seen.add(citation_key)
+
+        return citations
+
+    def format_citations(self, citations: list[dict]) -> list[str]:
+        """
+        Convert structured citations into human-readable labels.
+        """
+
+        formatted = []
+
+        for citation in citations:
+            source = citation["source"]
+
+            if "page" in citation:
+                formatted.append(
+                    f"{source} — Page {citation['page']}"
+                )
+            else:
+                formatted.append(source)
+
+        return formatted
 
     def build_context(self, results: dict) -> str:
         """
@@ -147,6 +206,7 @@ Rules:
    in the provided company documents.
 3. Keep the answer concise and directly answer the question.
 4. Do not use outside knowledge.
+5. Do not create, modify, or invent source names or page numbers.
 """
 
         user_prompt = f"""
@@ -177,12 +237,15 @@ Question:
 
     def ask(self, question: str) -> dict:
         """
-        Run the complete RAG pipeline.
+        Run the complete RAG pipeline and return the answer
+        together with structured source citations.
         """
 
         results = self.retrieve(question)
 
         context = self.build_context(results)
+
+        citations = self.extract_citations(results)
 
         answer = self.generate_answer(
             question=question,
@@ -194,4 +257,6 @@ Question:
             "answer": answer,
             "context": context,
             "results": results,
+            "citations": citations,
+            "formatted_citations": self.format_citations(citations),
         }
