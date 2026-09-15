@@ -1,78 +1,53 @@
 import os
+import sys
 from pathlib import Path
-
-from dotenv import load_dotenv
-from openai import OpenAI
-
-from embeddings.embedder import DocumentEmbedder
-from vectorstore.chroma_store import ChromaVectorStore
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-CHROMA_DIR = PROJECT_ROOT / "data" / "chroma"
+SRC_DIR = PROJECT_ROOT / "src"
+
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
+
+
+from dotenv import load_dotenv
+
+from embeddings.embedder import DocumentEmbedder
+from llm.factory import create_llm_provider
+from vectorstore.chroma_store import ChromaVectorStore
+
+
+load_dotenv()
 
 
 class RAGChain:
     """
-    Retrieval-Augmented Generation pipeline with source citations.
-
-    Flow:
-        Question
-            ↓
-        Query Embedding
-            ↓
-        ChromaDB Retrieval
-            ↓
-        Context + Citations
-            ↓
-        NVIDIA NeMoTron
-            ↓
-        Answer + Source Citations
+    Retrieval-Augmented Generation pipeline for the Nexora
+    Enterprise Knowledge Assistant.
     """
 
     def __init__(
         self,
-        chroma_directory: str | Path = CHROMA_DIR,
         top_k: int = 3,
+        collection_name: str = "nexora_documents",
     ):
-        load_dotenv()
-
-        self.model = os.getenv(
-            "NVIDIA_MODEL",
-            "nvidia/nemotron-3-ultra-550b-a55b",
-        )
-
-        self.base_url = os.getenv(
-            "NVIDIA_BASE_URL",
-            "https://integrate.api.nvidia.com/v1",
-        )
-
-        api_key = os.getenv("NVIDIA_API_KEY")
-
-        if not api_key:
-            raise ValueError(
-                "NVIDIA_API_KEY is not configured in the environment."
-            )
-
         if top_k <= 0:
             raise ValueError("top_k must be greater than 0.")
 
         self.top_k = top_k
 
-        self.client = OpenAI(
-            base_url=self.base_url,
-            api_key=api_key,
-        )
-
         self.embedder = DocumentEmbedder()
 
         self.vector_store = ChromaVectorStore(
-            persist_directory=chroma_directory,
+            persist_directory=PROJECT_ROOT / "data" / "chroma",
+            collection_name=collection_name,
         )
+
+        self.llm = create_llm_provider()
 
     def retrieve(self, question: str) -> dict:
         """
-        Retrieve the most relevant document chunks for a question.
+        Retrieve the most relevant document chunks from ChromaDB.
         """
 
         if not question or not question.strip():
@@ -85,12 +60,45 @@ class RAGChain:
             n_results=self.top_k,
         )
 
+    def build_context(self, results: dict) -> str:
+        """
+        Build grounded context from the raw ChromaDB query result.
+        """
+
+        documents = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+
+        context_parts = []
+
+        for document, metadata in zip(documents, metadatas):
+            metadata = metadata or {}
+
+            source = metadata.get("source", "unknown")
+            source_name = Path(str(source)).name
+
+            page = metadata.get("page")
+
+            if page is not None:
+                try:
+                    page_number = int(page) + 1
+                    source_label = (
+                        f"{source_name}, page {page_number}"
+                    )
+                except (TypeError, ValueError):
+                    source_label = source_name
+            else:
+                source_label = source_name
+
+            context_parts.append(
+                f"[Source: {source_label}]\n"
+                f"{document}"
+            )
+
+        return "\n\n".join(context_parts)
+
     def extract_citations(self, results: dict) -> list[dict]:
         """
-        Extract structured citations from retrieved document metadata.
-
-        Citations are created from the actual ChromaDB retrieval results.
-        The LLM does not generate or invent citation information.
+        Extract unique citations directly from ChromaDB metadata.
         """
 
         metadatas = results.get("metadatas", [[]])[0]
@@ -101,82 +109,56 @@ class RAGChain:
         for metadata in metadatas:
             metadata = metadata or {}
 
-            source = Path(
-                metadata.get("source", "unknown")
-            ).name
+            source = metadata.get("source")
+
+            if not source:
+                continue
+
+            source_name = Path(str(source)).name
 
             page = metadata.get("page")
 
             if page is not None:
-                citation = {
-                    "source": source,
-                    "page": int(page) + 1,
-                }
-                citation_key = (source, int(page) + 1)
-            else:
-                citation = {
-                    "source": source,
-                }
-                citation_key = (source, None)
+                try:
+                    page = int(page) + 1
+                except (TypeError, ValueError):
+                    page = None
 
-            if citation_key not in seen:
-                citations.append(citation)
-                seen.add(citation_key)
+            citation_key = (source_name, page)
+
+            if citation_key in seen:
+                continue
+
+            seen.add(citation_key)
+
+            citations.append(
+                {
+                    "source": source_name,
+                    "page": page,
+                }
+            )
 
         return citations
 
     def format_citations(self, citations: list[dict]) -> list[str]:
         """
-        Convert structured citations into human-readable labels.
+        Convert citation dictionaries into human-readable strings.
         """
 
         formatted = []
 
         for citation in citations:
             source = citation["source"]
+            page = citation.get("page")
 
-            if "page" in citation:
+            if page is not None:
                 formatted.append(
-                    f"{source} — Page {citation['page']}"
+                    f"{source} — Page {page}"
                 )
             else:
                 formatted.append(source)
 
         return formatted
-
-    def build_context(self, results: dict) -> str:
-        """
-        Convert retrieved ChromaDB results into an LLM context string.
-        """
-
-        documents = results.get("documents", [[]])[0]
-        metadatas = results.get("metadatas", [[]])[0]
-
-        context_parts = []
-
-        for index, document in enumerate(documents):
-            metadata = (
-                metadatas[index]
-                if index < len(metadatas)
-                else {}
-            )
-
-            source = Path(
-                metadata.get("source", "unknown")
-            ).name
-
-            page = metadata.get("page")
-
-            if page is not None:
-                source_label = f"{source}, page {int(page) + 1}"
-            else:
-                source_label = source
-
-            context_parts.append(
-                f"[Source: {source_label}]\n{document}"
-            )
-
-        return "\n\n".join(context_parts)
 
     def generate_answer(
         self,
@@ -184,62 +166,50 @@ class RAGChain:
         context: str,
     ) -> str:
         """
-        Generate an answer using only the retrieved context.
+        Generate a grounded answer using the configured LLM provider.
+        """
+
+        system_prompt = (
+            "You are Nexora, an enterprise knowledge assistant. "
+            "Answer the user's question using ONLY the provided "
+            "company document context. "
+            "Do not use outside knowledge. "
+            "Do not invent facts. "
+            "If the provided context does not contain enough "
+            "information to answer the question, clearly say that "
+            "the information is not available in the provided "
+            "company documents. "
+            "Keep the answer concise and directly answer the question. "
+            "Do not create, modify, or invent source names or page numbers."
+        )
+
+        user_prompt = f"""
+Company document context:
+
+{context}
+
+Question:
+{question}
+
+Answer using only the company document context above.
+"""
+
+        return self.llm.generate(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=0.2,
+            max_tokens=100,
+        )
+
+    def ask(self, question: str) -> dict:
+        """
+        Execute the complete RAG pipeline.
         """
 
         if not question or not question.strip():
             raise ValueError("Question cannot be empty.")
 
-        if not context.strip():
-            raise ValueError("Context cannot be empty.")
-
-        system_prompt = """
-You are Nexora Enterprise's knowledge assistant.
-
-Answer the user's question using ONLY the information provided
-in the context.
-
-Rules:
-1. Do not invent or assume information.
-2. If the context does not contain enough information to answer
-   the question, clearly say that the information is not available
-   in the provided company documents.
-3. Keep the answer concise and directly answer the question.
-4. Do not use outside knowledge.
-5. Do not create, modify, or invent source names or page numbers.
-"""
-
-        user_prompt = f"""
-Context:
-{context}
-
-Question:
-{question}
-"""
-
-        response = self.client.chat.completions.create(
-            model=self.model,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt.strip(),
-                },
-                {
-                    "role": "user",
-                    "content": user_prompt.strip(),
-                },
-            ],
-            temperature=0.2,
-            max_tokens=300,
-        )
-
-        return response.choices[0].message.content.strip()
-
-    def ask(self, question: str) -> dict:
-        """
-        Run the complete RAG pipeline and return the answer
-        together with structured source citations.
-        """
+        question = question.strip()
 
         results = self.retrieve(question)
 

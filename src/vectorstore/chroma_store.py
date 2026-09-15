@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import chromadb
+
 from langchain_core.documents import Document
 
 
@@ -26,7 +27,9 @@ class ChromaVectorStore:
 
         self.collection = self.client.get_or_create_collection(
             name=collection_name,
-            metadata={"description": "Nexora Enterprise knowledge base"},
+            metadata={
+                "description": "Nexora Enterprise knowledge base"
+            },
         )
 
     def add_documents(

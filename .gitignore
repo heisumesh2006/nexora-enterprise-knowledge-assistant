@@ -24,3 +24,13 @@ Thumbs.db
 
 data/chroma/
 data/chroma_test/
+.venv/
+__pycache__/
+*.pyc
+.env
+
+data/chroma/
+data/chroma_test/
+
+node_modules/
+backend/.env
