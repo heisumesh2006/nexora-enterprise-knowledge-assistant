@@ -2,12 +2,13 @@ const express = require("express");
 const cors = require("cors");
 const dotenv = require("dotenv");
 
+const { askAI } = require("./services/aiService");
+
 dotenv.config();
 
 const app = express();
 
-const PORT = process.env.PORT || 5000;
-const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://127.0.0.1:8000";
+const PORT = Number(process.env.PORT) || 5000;
 
 app.use(cors());
 app.use(express.json());
@@ -36,36 +37,35 @@ app.post("/api/ask", async (req, res) => {
   }
 
   try {
-    const response = await fetch(`${AI_SERVICE_URL}/ask`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        question: question.trim(),
-      }),
+    const data = await askAI(question.trim());
+
+    return res.status(200).json({
+      question: data.question,
+      answer: data.answer,
+      citations: data.citations,
     });
+  } catch (error) {
+    console.error("AI service request failed:", error);
 
-    const data = await response.json();
-
-    if (!response.ok) {
-      return res.status(response.status).json({
-        error: "AI service request failed.",
-        details: data,
+    if (error.code === "AI_SERVICE_TIMEOUT") {
+      return res.status(504).json({
+        error: "AI service request timed out.",
       });
     }
 
-    return res.json(data);
-  } catch (error) {
-    console.error("AI service connection failed:", error);
+    if (error.status) {
+      return res.status(502).json({
+        error: "AI service returned an error.",
+        details: error.details,
+      });
+    }
 
-    return res.status(502).json({
-      error: "Unable to connect to AI service.",
+    return res.status(503).json({
+      error: "AI service is unavailable.",
     });
   }
 });
 
 app.listen(PORT, () => {
   console.log(`Nexora backend running on http://127.0.0.1:${PORT}`);
-  console.log(`AI service configured at ${AI_SERVICE_URL}`);
 });
