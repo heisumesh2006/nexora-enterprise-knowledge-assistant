@@ -97,7 +97,7 @@ function App() {
     }
   };
 
-  const useSuggestion = (suggestion) => {
+  const selectSuggestion  = (suggestion) => {
     setQuestion(suggestion);
   };
 
@@ -193,7 +193,7 @@ function App() {
                 {suggestedQuestions.map((suggestion) => (
                   <button
                     key={suggestion}
-                    onClick={() => useSuggestion(suggestion)}
+                    onClick={() => selectSuggestion(suggestion)}
                   >
                     {suggestion}
                   </button>
