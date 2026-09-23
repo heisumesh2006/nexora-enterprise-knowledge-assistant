@@ -53,9 +53,10 @@ def main():
     print("\nAdding documents to vector database...")
 
     vector_store.add_documents(
-        documents=chunks,
-        embeddings=embeddings,
-    )
+    documents=chunks,
+    embeddings=embeddings,
+    document_id="sample-documents",
+)
 
     print(f"Vectors stored: {vector_store.count()}")
 

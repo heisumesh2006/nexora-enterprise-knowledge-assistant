@@ -2,7 +2,6 @@ from pathlib import Path
 from uuid import uuid4
 
 import chromadb
-
 from langchain_core.documents import Document
 
 
@@ -41,9 +40,6 @@ class ChromaVectorStore:
     ) -> list[str]:
         """
         Store document chunks and their embeddings in ChromaDB.
-
-        A document_id can be supplied so every chunk receives a
-        globally unique ID.
         """
 
         if len(documents) != len(embeddings):
@@ -88,10 +84,12 @@ class ChromaVectorStore:
     def search(
         self,
         query_embedding: list[float],
-        n_results: int = 3,
+        n_results: int = 5,
     ) -> dict:
         """
         Search ChromaDB using an embedding vector.
+
+        The caller chooses the candidate pool size for reranking.
         """
 
         if not query_embedding:
@@ -100,9 +98,36 @@ class ChromaVectorStore:
         if n_results <= 0:
             raise ValueError("n_results must be greater than 0.")
 
+        # Chroma cannot return more results than exist in the collection.
+        total_documents = self.collection.count()
+        candidate_count = min(n_results, total_documents)
+
+        if candidate_count == 0:
+            return {
+                "ids": [[]],
+                "documents": [[]],
+                "metadatas": [[]],
+                "distances": [[]],
+            }
+
         return self.collection.query(
             query_embeddings=[query_embedding],
-            n_results=n_results,
+            n_results=candidate_count,
+        )
+
+    def get_all_documents(self) -> dict:
+        """
+        Return all stored document chunks and their metadata.
+
+        This is used by the hybrid retrieval layer to perform
+        keyword-based matching in addition to semantic retrieval.
+        """
+
+        return self.collection.get(
+            include=[
+                "documents",
+                "metadatas",
+            ]
         )
 
     def delete(self, ids: list[str]) -> None:
@@ -124,8 +149,6 @@ class ChromaVectorStore:
         )
 
     def count(self) -> int:
-        """
-        Return the number of stored chunks.
-        """
+        """Return the number of stored chunks."""
 
         return self.collection.count()

@@ -4,12 +4,14 @@ import {
   Bot,
   FileText,
   MessageSquare,
+  Paperclip,
   Plus,
   Search,
   Sparkles,
   User,
+  X,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 const API_URL = "http://127.0.0.1:5000";
 
@@ -24,10 +26,17 @@ function App() {
   const [messages, setMessages] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
 
+  const [selectedFile, setSelectedFile] = useState(null);
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadMessage, setUploadMessage] = useState("");
+  const [uploadError, setUploadError] = useState("");
+
+  const fileInputRef = useRef(null);
+
   const sendQuestion = async () => {
     const trimmedQuestion = question.trim();
 
-    if (!trimmedQuestion || isLoading) {
+    if (!trimmedQuestion || isLoading || isUploading) {
       return;
     }
 
@@ -90,6 +99,100 @@ function App() {
     }
   };
 
+  const uploadDocument = async (file) => {
+    if (!file) {
+      return;
+    }
+
+    const allowedTypes = [
+      "application/pdf",
+      "text/plain",
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ];
+
+    const allowedExtensions = [".pdf", ".txt", ".docx"];
+    const fileExtension = file.name
+      .slice(file.name.lastIndexOf("."))
+      .toLowerCase();
+
+    if (
+      !allowedTypes.includes(file.type) &&
+      !allowedExtensions.includes(fileExtension)
+    ) {
+      setUploadError("Only PDF, TXT, and DOCX files are supported.");
+      setUploadMessage("");
+      setSelectedFile(null);
+      return;
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      setUploadError("File size must not exceed 10 MB.");
+      setUploadMessage("");
+      setSelectedFile(null);
+      return;
+    }
+
+    setSelectedFile(file);
+    setUploadError("");
+    setUploadMessage("");
+    setIsUploading(true);
+
+    const formData = new FormData();
+    formData.append("document", file);
+
+    try {
+      const response = await fetch(
+        `${API_URL}/api/documents/upload`,
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.error || "Failed to upload the document."
+        );
+      }
+
+      setUploadMessage(
+        `${file.name} uploaded and indexed successfully.`
+      );
+      setUploadError("");
+    } catch (error) {
+      setUploadError(
+        error.message || "Unable to upload the document."
+      );
+      setUploadMessage("");
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0];
+
+    if (file) {
+      uploadDocument(file);
+    }
+
+    event.target.value = "";
+  };
+
+  const openFilePicker = () => {
+    if (!isUploading) {
+      fileInputRef.current?.click();
+    }
+  };
+
+  const removeSelectedFile = () => {
+    setSelectedFile(null);
+    setUploadMessage("");
+    setUploadError("");
+  };
+
   const handleKeyDown = (event) => {
     if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
@@ -97,7 +200,7 @@ function App() {
     }
   };
 
-  const selectSuggestion  = (suggestion) => {
+  const selectSuggestion = (suggestion) => {
     setQuestion(suggestion);
   };
 
@@ -105,6 +208,9 @@ function App() {
     setMessages([]);
     setQuestion("");
     setIsLoading(false);
+    setSelectedFile(null);
+    setUploadMessage("");
+    setUploadError("");
   };
 
   return (
@@ -277,7 +383,65 @@ function App() {
         </section>
 
         <div className="composer-wrapper">
+          {selectedFile && (
+            <div className="upload-status">
+              <div className="upload-file">
+                <FileText size={15} />
+
+                <span>
+                  {selectedFile.name}
+                </span>
+
+                {!isUploading && (
+                  <button
+                    className="remove-file-button"
+                    onClick={removeSelectedFile}
+                    aria-label="Remove uploaded file"
+                  >
+                    <X size={14} />
+                  </button>
+                )}
+              </div>
+
+              {isUploading && (
+                <span className="uploading-text">
+                  Indexing...
+                </span>
+              )}
+            </div>
+          )}
+
+          {uploadMessage && (
+            <div className="upload-success">
+              {uploadMessage}
+            </div>
+          )}
+
+          {uploadError && (
+            <div className="upload-error">
+              {uploadError}
+            </div>
+          )}
+
           <div className="composer">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.txt,.docx"
+              onChange={handleFileChange}
+              hidden
+            />
+
+            <button
+              className="attach-button"
+              onClick={openFilePicker}
+              disabled={isUploading}
+              aria-label="Upload document"
+              title="Upload PDF, TXT, or DOCX"
+            >
+              <Paperclip size={19} />
+            </button>
+
             <input
               type="text"
               value={question}
@@ -285,14 +449,18 @@ function App() {
                 setQuestion(event.target.value)
               }
               onKeyDown={handleKeyDown}
-              disabled={isLoading}
+              disabled={isLoading || isUploading}
               placeholder="Ask a question about your knowledge base..."
             />
 
             <button
               className="send-button"
               onClick={sendQuestion}
-              disabled={isLoading || !question.trim()}
+              disabled={
+                isLoading ||
+                isUploading ||
+                !question.trim()
+              }
               aria-label="Send question"
             >
               <ArrowUp size={19} />
@@ -300,8 +468,8 @@ function App() {
           </div>
 
           <div className="composer-hint">
-            Nexora answers using information retrieved from your
-            indexed documents.
+            Upload a document to add it to the knowledge base,
+            then ask Nexora questions about it.
           </div>
         </div>
       </main>

@@ -1,1 +1,42 @@
-[]
+[
+  {
+    "id": "43e9f95e-011c-4262-9485-e55841957c54",
+    "originalName": "node-index-test.txt",
+    "storedName": "node-index-test-1789463676118-686013046.txt",
+    "size": 119,
+    "type": "text/plain",
+    "uploadedAt": "2026-09-15T09:14:36.124Z"
+  },
+  {
+    "id": "27f22ea9-c641-4afb-9e9c-7abe72f60006",
+    "originalName": "ticket.pdf",
+    "storedName": "ticket-1789465172067-895463744.pdf",
+    "size": 190375,
+    "type": "application/pdf",
+    "uploadedAt": "2026-09-15T09:39:32.077Z"
+  },
+  {
+    "id": "4efc891f-c3ee-4147-9432-0c782de75b0e",
+    "originalName": "leave_policy.pdf",
+    "storedName": "leave_policy-1789465387660-94405451.pdf",
+    "size": 1777,
+    "type": "application/pdf",
+    "uploadedAt": "2026-09-15T09:43:07.668Z"
+  },
+  {
+    "id": "b10b9a34-0b48-4a0b-ae0e-7e14c2c315db",
+    "originalName": "leave_policy.pdf",
+    "storedName": "leave_policy-1789466375526-38347239.pdf",
+    "size": 1777,
+    "type": "application/pdf",
+    "uploadedAt": "2026-09-15T09:59:35.532Z"
+  },
+  {
+    "id": "2a335e0f-ff8a-436c-88d1-e19b40abfc96",
+    "originalName": "leave_policy.pdf",
+    "storedName": "leave_policy-1789466783534-833925577.pdf",
+    "size": 1777,
+    "type": "application/pdf",
+    "uploadedAt": "2026-09-15T10:06:23.542Z"
+  }
+]

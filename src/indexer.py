@@ -10,11 +10,17 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CHROMA_DIR = PROJECT_ROOT / "data" / "chroma"
 
 
-def index_document(file_path: str | Path) -> dict:
+def index_document(
+    file_path: str | Path,
+    document_id: str | None = None,
+    display_name: str | None = None,
+) -> dict:
     """
     Load, chunk, embed, and store a single document in ChromaDB.
-    """
 
+    display_name is the user-facing filename that should appear in
+    citations. If it is not provided, the actual file name is used.
+    """
     path = Path(file_path)
 
     if not path.exists():
@@ -27,6 +33,11 @@ def index_document(file_path: str | Path) -> dict:
     if not documents:
         raise ValueError("Document contains no readable content.")
 
+    user_facing_name = display_name or path.name
+
+    for document in documents:
+        document.metadata["source"] = user_facing_name
+
     chunks = split_documents(
         documents,
         chunk_size=500,
@@ -36,8 +47,10 @@ def index_document(file_path: str | Path) -> dict:
     if not chunks:
         raise ValueError("Document produced no chunks.")
 
-    embedder = DocumentEmbedder()
+    for chunk in chunks:
+        chunk.metadata["source"] = user_facing_name
 
+    embedder = DocumentEmbedder()
     embeddings = embedder.embed_documents(chunks)
 
     vector_store = ChromaVectorStore(
@@ -47,10 +60,11 @@ def index_document(file_path: str | Path) -> dict:
     vector_store.add_documents(
         documents=chunks,
         embeddings=embeddings,
+        document_id=document_id,
     )
 
     return {
-        "filename": path.name,
+        "filename": user_facing_name,
         "documents": len(documents),
         "chunks": len(chunks),
         "vectors": vector_store.count(),

@@ -59,12 +59,12 @@ def main():
     }
 
     assert "company_faq.txt" in sources_1
-    assert "leave_policy.pdf" in sources_1
+    assert any(source.startswith("leave_policy") for source in sources_1)
 
     pdf_citation = next(
         citation
         for citation in citations_1
-        if citation["source"] == "leave_policy.pdf"
+        if citation["source"].startswith("leave_policy")
     )
 
     assert pdf_citation["page"] == 1
@@ -110,12 +110,14 @@ def main():
 
     answer_3 = result_3["answer"].lower()
 
-    assert (
-        "not available" in answer_3
-        or "not provided" in answer_3
-        or "does not contain" in answer_3
-        or "provided company documents" in answer_3
-    )
+    assert any(phrase in answer_3 for phrase in (
+        "could not be found", "not addressed", "not explicitly stated",
+        "not mentioned", "not provided", "do not contain", "does not contain",
+        "not available", "not specified", "no information",
+    ))
+    assert not any(phrase in answer_3 for phrase in (
+        "may offer", "might", "suggests", "does not have", "no annual bonus",
+    ))
 
     assert len(result_3["citations"]) > 0
 

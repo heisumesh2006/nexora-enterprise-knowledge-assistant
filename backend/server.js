@@ -13,6 +13,7 @@ dotenv.config();
 const app = express();
 
 const PORT = Number(process.env.PORT) || 5000;
+const AI_SERVICE_URL = process.env.AI_SERVICE_URL || "http://127.0.0.1:8000";
 
 const UPLOAD_DIR = path.join(__dirname, "uploads");
 
@@ -108,6 +109,7 @@ app.post("/api/ask", async (req, res) => {
     });
   }
 });
+
 app.get("/api/documents", (req, res) => {
   try {
     const documents = getDocuments();
@@ -124,33 +126,78 @@ app.get("/api/documents", (req, res) => {
   }
 });
 
-app.post("/api/documents/upload", upload.single("document"), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({
-      error: "No document was uploaded.",
-    });
-  }
+app.post(
+  "/api/documents/upload",
+  upload.single("document"),
+  async (req, res) => {
+    if (!req.file) {
+      return res.status(400).json({
+        error: "No document was uploaded.",
+      });
+    }
 
-  try {
-    const document = addDocument({
-      originalName: req.file.originalname,
-      storedName: req.file.filename,
-      size: req.file.size,
-      type: req.file.mimetype,
-    });
+    let document;
 
-    return res.status(201).json({
-      message: "Document uploaded successfully.",
-      document,
-    });
-  } catch (error) {
-    console.error("Failed to register uploaded document:", error);
+    try {
+      document = addDocument({
+        originalName: req.file.originalname,
+        storedName: req.file.filename,
+        size: req.file.size,
+        type: req.file.mimetype,
+      });
 
-    return res.status(500).json({
-      error: "Document was uploaded but could not be registered.",
-    });
-  }
-});
+      const filePath = path.resolve(req.file.path);
+
+      const indexResponse = await fetch(`${AI_SERVICE_URL}/index`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          file_path: filePath,
+          document_id: document.id,
+        }),
+      });
+
+      let indexData;
+
+      try {
+        indexData = await indexResponse.json();
+      } catch {
+        indexData = null;
+      }
+
+      if (!indexResponse.ok) {
+        console.error("AI indexing failed:", indexData);
+
+        return res.status(502).json({
+          error: "Document was uploaded but could not be indexed.",
+          document,
+          details:
+            indexData?.detail || "AI indexing service returned an error.",
+        });
+      }
+
+      return res.status(201).json({
+        message: "Document uploaded and indexed successfully.",
+        document,
+        indexing: {
+          filename: indexData.filename,
+          documents: indexData.documents,
+          chunks: indexData.chunks,
+          vectors: indexData.vectors,
+        },
+      });
+    } catch (error) {
+      console.error("Document upload/indexing failed:", error);
+
+      return res.status(503).json({
+        error: "Document could not be uploaded and indexed.",
+      });
+    }
+  },
+);
+
 app.use((error, req, res, next) => {
   if (error instanceof multer.MulterError) {
     if (error.code === "LIMIT_FILE_SIZE") {
