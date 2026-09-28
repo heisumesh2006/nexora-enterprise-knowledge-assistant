@@ -78,6 +78,15 @@ class RAGContractTests(unittest.TestCase):
             spec.loader.exec_module(api)
         with TestClient(api.app) as client:
             self.assertEqual(client.get("/health").status_code, 200)
+            rag.vector_store.get_statistics.return_value = {
+                "total_chunks": 7,
+                "indexed_documents": 2,
+                "documents": [{"document_id": "uploaded", "source": "manual.pdf", "chunks": 4}],
+            }
+            stats = client.get("/stats")
+            self.assertEqual(stats.status_code, 200)
+            self.assertEqual(stats.json()["total_chunks"], 7)
+            self.assertEqual(stats.json()["documents"][0]["source"], "manual.pdf")
             response = client.post("/ask", json={"question": "When is the train departing?"})
             self.assertEqual(response.status_code, 200)
             self.assertEqual(set(response.json()), {"question", "answer", "citations"})
@@ -113,6 +122,26 @@ class RAGContractTests(unittest.TestCase):
         self.assertEqual(store.collection.query.call_args.kwargs["n_results"], 7)
         store.search([1.0], n_results=100)
         self.assertEqual(store.collection.query.call_args.kwargs["n_results"], 24)
+
+    def test_chroma_statistics_group_actual_chunk_metadata(self):
+        store = ChromaVectorStore.__new__(ChromaVectorStore)
+        store.get_all_documents = Mock(return_value={
+            "ids": ["a", "b", "c"],
+            "metadatas": [
+                {"document_id": "upload-a", "source": "manual.pdf"},
+                {"document_id": "upload-a", "source": "manual.pdf"},
+                {"document_id": "upload-b", "source": "faq.txt"},
+            ],
+        })
+
+        self.assertEqual(store.get_statistics(), {
+            "total_chunks": 3,
+            "indexed_documents": 2,
+            "documents": [
+                {"document_id": "upload-b", "source": "faq.txt", "chunks": 1},
+                {"document_id": "upload-a", "source": "manual.pdf", "chunks": 2},
+            ],
+        })
 
 
 if __name__ == "__main__":

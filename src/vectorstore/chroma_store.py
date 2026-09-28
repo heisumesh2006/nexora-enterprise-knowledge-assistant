@@ -152,3 +152,35 @@ class ChromaVectorStore:
         """Return the number of stored chunks."""
 
         return self.collection.count()
+
+    def get_statistics(self) -> dict:
+        """Return live chunk totals grouped by their stored source metadata."""
+
+        snapshot = self.get_all_documents()
+        grouped = {}
+
+        for metadata in snapshot.get("metadatas") or []:
+            metadata = metadata or {}
+            document_id = metadata.get("document_id")
+            source = metadata.get("source", "unknown")
+            key = (document_id, source)
+
+            if key not in grouped:
+                grouped[key] = {
+                    "document_id": document_id,
+                    "source": source,
+                    "chunks": 0,
+                }
+
+            grouped[key]["chunks"] += 1
+
+        documents = sorted(
+            grouped.values(),
+            key=lambda document: (document["source"].lower(), document["document_id"] or ""),
+        )
+
+        return {
+            "total_chunks": len(snapshot.get("ids") or []),
+            "indexed_documents": len(documents),
+            "documents": documents,
+        }

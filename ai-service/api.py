@@ -66,6 +66,20 @@ def health_check():
     }
 
 
+@app.get("/stats")
+def knowledge_base_stats():
+    """Report counts directly from the persistent Chroma collection."""
+
+    try:
+        return rag.vector_store.get_statistics()
+    except Exception as exc:
+        print(f"Knowledge-base statistics failed: {exc}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to read knowledge-base statistics.",
+        ) from exc
+
+
 @app.post("/ask", response_model=AskResponse)
 def ask_question(request: AskRequest):
     question = request.question.strip()

@@ -126,6 +126,26 @@ app.get("/api/documents", (req, res) => {
   }
 });
 
+app.get("/api/knowledge-base", async (req, res) => {
+  try {
+    const response = await fetch(`${AI_SERVICE_URL}/stats`);
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(502).json({
+        error: data.detail || "AI service could not read the knowledge base.",
+      });
+    }
+
+    return res.status(200).json(data);
+  } catch (error) {
+    console.error("Failed to load knowledge-base statistics:", error);
+    return res.status(503).json({
+      error: "AI service is unavailable.",
+    });
+  }
+});
+
 app.post(
   "/api/documents/upload",
   upload.single("document"),
