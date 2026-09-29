@@ -5,7 +5,9 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-from rag.retrieval import rerank, field_evidence, requested_fields, table_hint, structured_hint, context_excerpt, extractive_answer
+from rag.retrieval import (rerank, field_evidence, requested_fields, table_hint,
+                            structured_hint, context_excerpt, extractive_answer,
+                            token_similarity)
 
 
 class RetrievalTests(unittest.TestCase):
@@ -123,6 +125,73 @@ class RetrievalTests(unittest.TestCase):
         texts = ["PNR: 9876543210", "Train Number: 54321", "PNR and train number instructions"]
         result = self.rank("What are the PNR and train number?", texts, [2, 0, 1])
         self.assertEqual(set(result["ids"][0]), {"chunk-0", "chunk-1"})
+
+    def test_typo_tolerant_topic_gate_excludes_unrelated_ticket_chunks(self):
+        texts = [
+            "Railway instructions mention Internet ticketing and passenger rules.",
+            "EXPERIENCE\nFull Stack Development and AI Intern at Example Labs.",
+            "Data Analyst Intern at Example Data, using SQL and Excel.",
+            "Passenger departure and arrival instructions.",
+        ]
+        metadata = [
+            {"document_id": "ticket", "source": "ticket.pdf"},
+            {"document_id": "resume", "source": "resume.pdf"},
+            {"document_id": "resume", "source": "resume.pdf"},
+            {"document_id": "ticket", "source": "ticket.pdf"},
+        ]
+        semantic = {"ids": [["chunk-0", "chunk-3", "chunk-1", "chunk-2"]],
+                    "distances": [[0.1, 0.2, 0.3, 0.4]]}
+        for question in ["list the interships done", "list the internships done"]:
+            with self.subTest(question=question):
+                result = rerank(question, semantic, {
+                    "ids": [f"chunk-{i}" for i in range(len(texts))],
+                    "documents": texts, "metadatas": metadata,
+                }, 3)
+                self.assertEqual(
+                    {item["source"] for item in result["metadatas"][0]},
+                    {"resume.pdf"},
+                )
+                self.assertTrue(any("Intern" in item for item in result["documents"][0]))
+
+    def test_similar_prefix_does_not_make_internet_an_intern_match(self):
+        self.assertGreater(token_similarity("inter", "intern"), 0.84)
+        self.assertEqual(token_similarity("intern", "internet"), 0.0)
+
+    def test_document_gate_prefers_full_topic_coverage_over_generic_word(self):
+        texts = [
+            "Standard working hours are 9:00 AM to 6:00 PM.",
+            "Railway instructions are valid during operating hours.",
+        ]
+        metadata = [
+            {"document_id": "handbook", "source": "handbook.docx"},
+            {"document_id": "ticket", "source": "ticket.pdf"},
+        ]
+        result = rerank(
+            "What are the standard working hours?",
+            {"ids": [["chunk-1", "chunk-0"]], "distances": [[0.1, 0.2]]},
+            {"ids": ["chunk-0", "chunk-1"], "documents": texts, "metadatas": metadata},
+            3,
+        )
+        self.assertEqual([m["source"] for m in result["metadatas"][0]], ["handbook.docx"])
+
+    def test_semantic_context_drops_ticket_when_handbook_covers_all_terms(self):
+        texts = [
+            "Standard working hours are 9:00 AM to 6:00 PM.",
+            "Railway instructions mention operating hours and ticket rules.",
+            "Employee handbook working hours policy.",
+        ]
+        metadata = [
+            {"document_id": "handbook", "source": "handbook.docx"},
+            {"document_id": "ticket", "source": "ticket.pdf"},
+            {"document_id": "handbook", "source": "handbook.docx"},
+        ]
+        result = rerank(
+            "What are the standard working hours?",
+            {"ids": [["chunk-1", "chunk-0", "chunk-2"]], "distances": [[0.1, 0.2, 0.3]]},
+            {"ids": [f"chunk-{i}" for i in range(3)], "documents": texts, "metadatas": metadata},
+            3,
+        )
+        self.assertTrue(all(m["source"] == "handbook.docx" for m in result["metadatas"][0]))
 
     def test_fare_support_stays_on_same_document_page(self):
         texts = ["Fare refunds follow railway rules.", "Ticket Fare\nTotal Fare (all inclusive)",

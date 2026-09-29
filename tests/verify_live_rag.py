@@ -14,6 +14,8 @@ from urllib.request import Request, urlopen
 
 
 CASES = [
+    ("list the interships done", [r"intern|experience|development"]),
+    ("list the internships done", [r"intern|experience|development"]),
     ("When is the train departing?", [r"08:35"]),
     ("What is the arrival time?", [r"14:00"]),
     ("List out the passenger details.", [r"A\s+DEVI", r"\b45\b", r"\b(?:F|Female)\b", r"CNF\s*/\s*D7\s*/\s*35\s*/\s*NO CHOICE"]),
@@ -41,6 +43,9 @@ def main():
             assert result["question"] == question
             assert all(re.search(pattern, result["answer"], re.I) for pattern in patterns), result["answer"]
             assert result["citations"] and all(c["source"] for c in result["citations"])
+            if question in {"list the interships done", "list the internships done"}:
+                assert any("resume" in c["source"].lower() for c in result["citations"]), result
+                assert not any("ticket" in c["source"].lower() for c in result["citations"]), result
             if question == CASES[-1][0]:
                 answer = result["answer"].lower()
                 assert any(phrase in answer for phrase in (
@@ -62,7 +67,7 @@ def main():
             print(json.dumps({"status": "FAIL", "question": question, "detail": detail}), flush=True)
     if failed:
         raise SystemExit(f"{len(failed)} checks failed")
-    print("All 8 live answer checks passed.", flush=True)
+    print(f"All {len(CASES)} live answer checks passed.", flush=True)
 
 
 if __name__ == "__main__":

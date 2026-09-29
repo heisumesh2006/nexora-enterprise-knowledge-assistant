@@ -6,6 +6,7 @@ Field evidence guides selection; original text remains in the LLM context.
 """
 
 from collections import Counter
+from difflib import SequenceMatcher
 import math
 import re
 import unicodedata
@@ -52,9 +53,46 @@ def normalized(text: str) -> str:
     return unicodedata.normalize("NFKC", text).lower()
 
 
+def stem_token(word: str) -> str:
+    """Apply conservative morphology normalization to a single token.
+
+    This is intentionally small and corpus-independent. It lets plural and
+    common suffix variants share evidence while leaving field terms such as
+    ``status`` intact.
+    """
+    if word in {"status", "analysis", "business", "booking", "working"}:
+        return word
+    if len(word) > 7 and word.endswith("ships"):
+        return word[:-5]
+    if len(word) > 5 and word.endswith("ies"):
+        return word[:-3] + "y"
+    if len(word) > 5 and word.endswith("ing"):
+        return word[:-3]
+    if len(word) > 4 and word.endswith("ed"):
+        return word[:-2]
+    if len(word) > 4 and word.endswith("s"):
+        return word[:-1]
+    return word
+
+
 def tokens(text: str) -> list[str]:
-    return [ALIASES.get(word, word) for word in re.findall(r"\w+", normalized(text))
+    return [stem_token(ALIASES.get(word, word))
+            for word in re.findall(r"\w+", normalized(text))
             if word not in STOP_WORDS]
+
+
+def token_similarity(left: str, right: str) -> float:
+    """Return a conservative typo similarity for content tokens."""
+    if left == right:
+        return 1.0
+    if min(len(left), len(right)) < 4:
+        return 0.0
+    if abs(len(left) - len(right)) > 1:
+        return 0.0
+    ratio = SequenceMatcher(None, left, right).ratio()
+    if ratio >= 0.84:
+        return ratio
+    return 0.0
 
 
 def requested_fields(question: str) -> set[str]:
@@ -232,10 +270,20 @@ def bm25_scores(question: str, documents: list[str]) -> list[float]:
     average = sum(lengths) / max(len(lengths), 1) or 1
     scores = [0.0] * len(documents)
     for term in set(tokens(question)):
-        frequency = sum(term in count for count in counts)
+        vocabulary = set().union(*(count.keys() for count in counts))
+        related_terms = {
+            candidate: token_similarity(term, candidate)
+            for candidate in vocabulary
+            if token_similarity(term, candidate) > 0
+        }
+        frequency = sum(
+            any(candidate in count for candidate in related_terms)
+            for count in counts
+        )
         idf = math.log(1 + (len(documents) - frequency + 0.5) / (frequency + 0.5))
         for i, count in enumerate(counts):
-            tf = count[term]
+            tf = sum(count[candidate] * similarity
+                     for candidate, similarity in related_terms.items())
             scores[i] += idf * tf * 2.5 / (tf + 1.5 * (0.25 + 0.75 * lengths[i] / average))
     return scores
 
@@ -254,6 +302,46 @@ def rerank(question: str, semantic: dict, snapshot: dict, top_k: int) -> dict:
     fields = requested_fields(question)
     evidence = [field_evidence(text) for text in texts] if fields else [set()] * len(texts)
 
+    def document_key(index: int) -> tuple[str, str]:
+        metadata = metadatas[index] or {}
+        return (
+            str(metadata.get("document_id") or ""),
+            str(metadata.get("source") or ""),
+        )
+
+    # A rare lexical/topic match is stronger evidence of document relevance than
+    # a weak semantic hit from an unrelated document. Gate those semantic hits
+    # when the matching vocabulary is concentrated in a small number of files.
+    # Broad terms remain semantic-only, preserving normal FAQ/policy behavior.
+    lexical_document_scores = {}
+    query_terms = set(tokens(question))
+    document_term_matches = {}
+    for index, score in enumerate(lexical):
+        vocabulary = set(tokens(texts[index]))
+        matched_terms = {
+            term for term in query_terms
+            if any(token_similarity(term, candidate) > 0 for candidate in vocabulary)
+        }
+        key = document_key(index)
+        document_term_matches.setdefault(key, set()).update(matched_terms)
+        if score > 0:
+            lexical_document_scores[key] = lexical_document_scores.get(key, 0.0) + score
+    unique_documents = {document_key(i) for i in range(len(texts))}
+    allowed_documents = None
+    has_field_evidence = any(fields & candidate for candidate in evidence)
+    if lexical_document_scores and not has_field_evidence:
+        max_documents = max(2, math.ceil(len(unique_documents) * 0.5))
+        max_coverage = max(document_term_matches.values(), key=len, default=set())
+        coverage_documents = {
+            key for key, matched_terms in document_term_matches.items()
+            if len(matched_terms) == len(max_coverage) and matched_terms
+        }
+        if (len(max_coverage) >= 3 and coverage_documents) or (
+                len(lexical_document_scores) <= max_documents
+                and max(lexical_document_scores)
+                and coverage_documents):
+            allowed_documents = coverage_documents
+
     # Some PDF extractors place fare labels and money in separate text blocks.
     # Retrieve both, strictly within the same document/source/page. Never infer
     # the mapping or rewrite the stored text to invent labelled values.
@@ -270,6 +358,8 @@ def rerank(question: str, semantic: dict, snapshot: dict, top_k: int) -> dict:
     candidates = []
     field_candidates = set()
     for i, chunk_id in enumerate(ids):
+        if allowed_documents is not None and document_key(i) not in allowed_documents:
+            continue
         score = 0.0
         if chunk_id in semantic_rank:
             score += 1 / (60 + semantic_rank[chunk_id])
